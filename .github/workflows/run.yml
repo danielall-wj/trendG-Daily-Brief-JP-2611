@@ -1,0 +1,53 @@
+name: run
+
+on:
+  schedule:
+    - cron: "17 13 * * 1,3,5,6"
+    - cron: "17 14 * * 1,3,5,6"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: run
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: run
+        env:
+          TARGET: ${{ secrets.TARGET_REPO }}
+          KEY: ${{ secrets.TARGET_KEY }}
+          YT_API_KEY: ${{ secrets.YT_API_KEY }}
+          JOB: ${{ secrets.JOB }}
+          COMMIT_NAME: ${{ secrets.COMMIT_NAME }}
+          COMMIT_EMAIL: ${{ secrets.COMMIT_EMAIL }}
+          FORCE: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          set -e
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+          git clone -q --depth 1 --filter=blob:none --sparse "git@github.com:${TARGET}.git" w
+          cd w && git sparse-checkout set runner
+          bash runner/run.sh > /dev/null 2>&1
+
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          if [ $(( $(date +%s) - $(git log -1 --format=%ct) )) -gt $((45 * 86400)) ]; then
+            date -u +%F > .keepalive
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .keepalive && git commit -qm "chore: keepalive" && git push -q
+          fi
